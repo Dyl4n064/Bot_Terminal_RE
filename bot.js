@@ -6,11 +6,18 @@ const express = require('express');
 // --- 1. CONFIGURATION DU MINI-SERVEUR WEB ---
 const app = express();
 app.get('/', (req, res) => res.send('Le Terminal ARK est en ligne et fonctionnel.'));
-// Render alloue un port dynamique via process.env.PORT
+
+// On utilise le port fourni par Render, sinon 10000 par défaut
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => console.log(`[SYSTEMA] Serveur web actif sur le port ${PORT}`));
 
 // --- 2. INITIALISATION BASE DE DONNÉES ET DISCORD ---
+// On vérifie que les clés sont bien présentes
+if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY || !process.env.DISCORD_TOKEN) {
+    console.error("ERREUR : Variables d'environnement manquantes !");
+    process.exit(1);
+}
+
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const bot = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
@@ -21,7 +28,8 @@ bot.once('ready', async () => {
     console.log(`[SYSTEMA] Bot connecté en tant que : ${bot.user.tag}`);
     
     try {
-        const guildId = process.env.GUILD_ID; // Mieux vaut utiliser une variable d'env
+        // Utilisation de la variable d'environnement pour l'ID du serveur
+        const guildId = process.env.GUILD_ID; 
         const guild = guildId ? bot.guilds.cache.get(guildId) : null;
         let commands = guild ? guild.commands : bot.application.commands;
 
