@@ -1,10 +1,10 @@
 require('dotenv').config();
 
-// --- 0. VÉRIFICATION CRITIQUE (Pour Render) ---
+// --- 0. VÉRIFICATION CRITIQUE DES VARIABLES D'ENVIRONNEMENT ---
 const requiredEnv = ['DISCORD_TOKEN', 'SUPABASE_URL', 'SUPABASE_KEY'];
 requiredEnv.forEach(key => {
     if (!process.env[key]) {
-        console.error(`!!! ERREUR : La variable ${key} est manquante !!!`);
+        console.error(`!!! ERREUR : La variable ${key} est manquante sur Render !!!`);
         process.exit(1);
     }
 });
@@ -13,7 +13,7 @@ const { Client, GatewayIntentBits, EmbedBuilder, ApplicationCommandOptionType } 
 const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
 
-// --- 1. CONFIGURATION DU MINI-SERVEUR WEB ---
+// --- 1. CONFIGURATION DU MINI-SERVEUR WEB (UPTIMEROBOT / RENDER) ---
 const app = express();
 app.get('/', (req, res) => res.send('Le Terminal ARK est en ligne et fonctionnel.'));
 
@@ -105,7 +105,7 @@ bot.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `🎭 **[SYNCHRONISATION RÔLE]**\nVous incarnez désormais : **${nomPersonnage}**.` });
     }
 
-    // --- VÉRIFICATION D'IDENTITÉ ---
+    // --- VÉRIFICATION D'IDENTITÉ POUR LE JOURNAL ---
     const { data: liaison } = await supabase.from('liaison_agents').select('nom_agent').eq('discord_id', user.id).single();
 
     if (!liaison && (commandName === 'journal')) {
@@ -165,33 +165,50 @@ bot.on('interactionCreate', async (interaction) => {
         if (cible.statut) embedFiche.addFields({ name: '📊 Statut', value: cible.statut, inline: true });
         if (cible.affiliation) embedFiche.addFields({ name: '🏢 Affiliation', value: cible.affiliation, inline: false });
         
-        // --- ADAPTATION DYNAMIQUE DES COLONNES SELON LA TABLE ---
+        // --- ROUTAGE DYNAMIQUE DU TEXTE LONG (AVEC ACCENT) ---
         const champTexte = tableCible === 'personnages' ? 'histoire_complète' : 'description';
         const titreTexte = tableCible === 'personnages' ? '📝 Histoire' : '📝 Description';
         const texteLong = cible[champTexte];
 
         if (texteLong && texteLong.trim() !== '') {
-            const LIMITE = 1000; // Limite confortable avant découpage
+            let restant = texteLong;
+            let compteur = 1;
 
-            if (texteLong.length > LIMITE) {
-                // Recherche du dernier saut de ligne avant la limite pour un rendu de texte propre
-                const partie1 = texteLong.substring(0, LIMITE);
-                const dernierSaut = partie1.lastIndexOf('\n');
-                const decoupe = dernierSaut > 0 ? dernierSaut : LIMITE;
+            // Découpage en blocs de 950 caractères max pour respecter la limite Discord de 1024 par champ
+            while (restant.length > 0) {
+                if (restant.length <= 950) {
+                    embedFiche.addFields({ name: `${titreTexte} ${compteur > 1 ? '(Suite ' + compteur + ')' : ''}`, value: restant });
+                    break;
+                }
+
+                let coupe = restant.lastIndexOf('\n', 950);
+                if (coupe <= 0) coupe = restant.lastIndexOf(' ', 950);
+                if (coupe <= 0) coupe = 950;
+
+                let morceau = restant.substring(0, coupe);
                 
-                embedFiche.addFields({ name: `${titreTexte} (Partie 1)`, value: texteLong.substring(0, decoupe) });
-                embedFiche.addFields({ name: `${titreTexte} (Partie 2)`, value: texteLong.substring(decoupe) });
-            } else {
-                embedFiche.addFields({ name: titreTexte, value: texteLong });
+                // Sécurité globale pour éviter de saturer l'embed complet (~6000 caractères max au total)
+                if (compteur === 5) {
+                    embedFiche.addFields({ name: `${titreTexte} (Fin)`, value: morceau + "...\n\n*⚠️ Dossier volumineux, fin de la transmission.*" });
+                    break;
+                }
+
+                embedFiche.addFields({ name: `${titreTexte} (Partie ${compteur})`, value: morceau });
+                restant = restant.substring(coupe).trim();
+                compteur++;
             }
         } else {
-            // Message explicite si la case dans la bdd est vide ou inexistante
-            embedFiche.addFields({ name: titreTexte, value: `*[ERREUR] Aucune donnée classifiée dans la colonne "${champTexte}".*` });
+            embedFiche.addFields({ name: titreTexte, value: `*[ERREUR] Aucune donnée classifiée disponible.*` });
         }
 
         if (cible.image_url) embedFiche.setThumbnail(cible.image_url);
 
-        return interaction.reply({ embeds: [embedFiche] });
+        try {
+            return await interaction.reply({ embeds: [embedFiche] });
+        } catch (error) {
+            console.error("[ERREUR DISCORD] Échec de l'envoi de l'embed :", error);
+            return interaction.reply({ content: "❌ Erreur structurelle : Les archives de ce dossier dépassent la capacité d'affichage maximale du terminal Discord.", ephemeral: true }).catch(console.error);
+        }
     }
 
     // --- COMMANDE : RAPPORT ---
@@ -210,7 +227,11 @@ bot.on('interactionCreate', async (interaction) => {
             .setDescription(rapport.contenu)
             .setFooter({ text: `Auteur : ${rapport.auteur_enquete || 'Inconnu'}` });
 
-        return interaction.reply({ embeds: [embedRapport] });
+        try {
+            return await interaction.reply({ embeds: [embedRapport] });
+        } catch (err) {
+            return interaction.reply({ content: "❌ Erreur lors de l'affichage du rapport d'enquête.", ephemeral: true });
+        }
     }
 });
 
