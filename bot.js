@@ -1,6 +1,6 @@
 require('dotenv').config();
 
-// --- 0. VÉRIFICATION CRITIQUE DES VARIABLES D'ENVIRONNEMENT ---
+// --- 0. VÉRIFICATION CRITIQUE ---
 const requiredEnv = ['DISCORD_TOKEN', 'SUPABASE_URL', 'SUPABASE_KEY'];
 requiredEnv.forEach(key => {
     if (!process.env[key]) {
@@ -9,11 +9,12 @@ requiredEnv.forEach(key => {
     }
 });
 
-const { Client, GatewayIntentBits, EmbedBuilder, ApplicationCommandOptionType } = require('discord.js');
+// NOUVEAU : Ajout des outils pour les boutons (ActionRowBuilder, ButtonBuilder, etc.)
+const { Client, GatewayIntentBits, EmbedBuilder, ApplicationCommandOptionType, ActionRowBuilder, ButtonBuilder, ButtonStyle, ComponentType } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
 
-// --- 1. CONFIGURATION DU MINI-SERVEUR WEB (UPTIMEROBOT / RENDER) ---
+// --- 1. CONFIGURATION DU MINI-SERVEUR WEB ---
 const app = express();
 app.get('/', (req, res) => res.send('Le Terminal ARK est en ligne et fonctionnel.'));
 
@@ -47,35 +48,15 @@ bot.once('ready', async () => {
                 name: 'journal',
                 description: '📝 Gérer le journal de bord du personnage incarné',
                 options: [
-                    {
-                        name: 'ecrire',
-                        type: ApplicationCommandOptionType.Subcommand,
-                        description: 'Ajouter une entrée au journal du personnage actuel',
-                        options: [{ name: 'texte', type: ApplicationCommandOptionType.String, description: 'Contenu du rapport', required: true }]
-                    },
-                    {
-                        name: 'lire',
-                        type: ApplicationCommandOptionType.Subcommand,
-                        description: 'Consulter les archives du personnage actuel',
-                        options: [{ name: 'numero', type: ApplicationCommandOptionType.Integer, description: 'Numéro du rapport', required: true }]
-                    }
+                    { name: 'ecrire', type: ApplicationCommandOptionType.Subcommand, description: 'Ajouter une entrée', options: [{ name: 'texte', type: ApplicationCommandOptionType.String, description: 'Contenu', required: true }] },
+                    { name: 'lire', type: ApplicationCommandOptionType.Subcommand, description: 'Consulter les archives', options: [{ name: 'numero', type: ApplicationCommandOptionType.Integer, description: 'Numéro', required: true }] }
                 ]
             },
             {
                 name: 'fiche',
                 description: '🔍 Consulter la base de données centrale',
                 options: [
-                    {
-                        name: 'categorie',
-                        type: ApplicationCommandOptionType.String,
-                        description: 'Le type de dossier à rechercher',
-                        required: true,
-                        choices: [
-                            { name: '👤 Personnage', value: 'personnages' },
-                            { name: '🏢 Organisation', value: 'organisations' },
-                            { name: '🦠 Souche / Virus', value: 'souches' }
-                        ]
-                    },
+                    { name: 'categorie', type: ApplicationCommandOptionType.String, description: 'Catégorie', required: true, choices: [ { name: '👤 Personnage', value: 'personnages' }, { name: '🏢 Organisation', value: 'organisations' }, { name: '🦠 Souche / Virus', value: 'souches' } ] },
                     { name: 'nom', type: ApplicationCommandOptionType.String, description: 'Le nom recherché', required: true }
                 ]
             },
@@ -96,24 +77,18 @@ bot.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     const { commandName, options, user } = interaction;
 
-    // --- COMMANDE : INCARNER ---
     if (commandName === 'incarner') {
         const nomPersonnage = options.getString('nom');
         const { error } = await supabase.from('liaison_agents').upsert({ discord_id: user.id, nom_agent: nomPersonnage });
-
         if (error) return interaction.reply({ content: `❌ Erreur système : ${error.message}`, ephemeral: true });
         return interaction.reply({ content: `🎭 **[SYNCHRONISATION RÔLE]**\nVous incarnez désormais : **${nomPersonnage}**.` });
     }
 
-    // --- VÉRIFICATION D'IDENTITÉ POUR LE JOURNAL ---
     const { data: liaison } = await supabase.from('liaison_agents').select('nom_agent').eq('discord_id', user.id).single();
+    if (!liaison && commandName === 'journal') return interaction.reply({ content: "⚠️ Accès refusé. Choisissez d'abord un personnage avec `/incarner`.", ephemeral: true });
 
-    if (!liaison && (commandName === 'journal')) {
-        return interaction.reply({ content: "⚠️ Accès refusé. Choisissez d'abord un personnage avec `/incarner`.", ephemeral: true });
-    }
-
-    // --- COMMANDE : JOURNAL ---
     if (commandName === 'journal') {
+        // ... (La logique du journal reste strictement identique)
         const sousCommande = options.getSubcommand();
         const persoActuel = liaison.nom_agent;
 
@@ -127,24 +102,16 @@ bot.on('interactionCreate', async (interaction) => {
         if (sousCommande === 'lire') {
             const numero = options.getInteger('numero');
             const { data: journaux } = await supabase.from('journal_bord').select('*').eq('auteur', persoActuel).order('created_at', { ascending: true });
-
-            if (!journaux || journaux.length === 0 || numero > journaux.length || numero <= 0) {
-                return interaction.reply({ content: `❌ Archive introuvable pour **${persoActuel}**.`, ephemeral: true });
-            }
+            if (!journaux || journaux.length === 0 || numero > journaux.length || numero <= 0) return interaction.reply({ content: `❌ Archive introuvable.`, ephemeral: true });
 
             const cible = journaux[numero - 1];
             const date = new Date(cible.created_at).toLocaleDateString('fr-FR');
-            const embedLog = new EmbedBuilder()
-                .setColor(COULEUR_TERMINAL)
-                .setTitle(`📁 JOURNAL DE BORD // ${persoActuel.toUpperCase()}`)
-                .setDescription(`*Rapport N°${numero} :*\n\n"${cible.contenu}"`)
-                .setFooter({ text: `Date de consigne : ${date}` });
-
+            const embedLog = new EmbedBuilder().setColor(COULEUR_TERMINAL).setTitle(`📁 JOURNAL // ${persoActuel.toUpperCase()}`).setDescription(`*Rapport N°${numero} :*\n\n"${cible.contenu}"`).setFooter({ text: `Date de consigne : ${date}` });
             return interaction.reply({ embeds: [embedLog] });
         }
     }
 
-    // --- COMMANDE : FICHE ---
+    // --- COMMANDE : FICHE (AVEC PAGINATION INTERACTIVE) ---
     if (commandName === 'fiche') {
         const tableCible = options.getString('categorie');
         const recherche = options.getString('nom');
@@ -156,82 +123,93 @@ bot.on('interactionCreate', async (interaction) => {
 
         const cible = resultats[0];
         const estDecede = cible.statut?.toLowerCase().includes('décédé') || cible.statut?.toLowerCase().includes('présumé') || cible.statut?.toLowerCase().includes('détruit');
-
-        const embedFiche = new EmbedBuilder()
-            .setColor(estDecede ? COULEUR_ALERTE : COULEUR_TERMINAL)
-            .setTitle(`🗂️ DOSSIER : ${cible.nom.toUpperCase()}`);
-
-        if (cible.espece) embedFiche.addFields({ name: '🧬 Classification', value: cible.espece, inline: true });
-        if (cible.statut) embedFiche.addFields({ name: '📊 Statut', value: cible.statut, inline: true });
-        if (cible.affiliation) embedFiche.addFields({ name: '🏢 Affiliation', value: cible.affiliation, inline: false });
         
-        // --- ROUTAGE DYNAMIQUE DU TEXTE LONG (AVEC ACCENT) ---
         const champTexte = tableCible === 'personnages' ? 'histoire_complète' : 'description';
         const titreTexte = tableCible === 'personnages' ? '📝 Histoire' : '📝 Description';
-        const texteLong = cible[champTexte];
+        const texteLong = cible[champTexte] || `*[ERREUR] Aucune donnée classifiée dans la colonne "${champTexte}".*`;
 
-        if (texteLong && texteLong.trim() !== '') {
-            let restant = texteLong;
-            let compteur = 1;
+        // 1. Découpage du texte en plusieurs pages (tableaux de textes)
+        const pagesTexte = [];
+        let restant = texteLong;
+        
+        while (restant.length > 0) {
+            let coupe = restant.length > 950 ? restant.lastIndexOf('\n', 950) : 950;
+            if (coupe <= 0) coupe = restant.lastIndexOf(' ', 950);
+            if (coupe <= 0) coupe = 950;
+            
+            pagesTexte.push(restant.substring(0, coupe).trim());
+            restant = restant.substring(coupe).trim();
+        }
 
-            // Découpage en blocs de 950 caractères max pour respecter la limite Discord de 1024 par champ
-            while (restant.length > 0) {
-                if (restant.length <= 950) {
-                    embedFiche.addFields({ name: `${titreTexte} ${compteur > 1 ? '(Suite ' + compteur + ')' : ''}`, value: restant });
-                    break;
-                }
+        // 2. Création des Embeds pour chaque page
+        const embedsPages = pagesTexte.map((texteDeLaPage, index) => {
+            const embed = new EmbedBuilder()
+                .setColor(estDecede ? COULEUR_ALERTE : COULEUR_TERMINAL)
+                .setTitle(`🗂️ DOSSIER : ${cible.nom.toUpperCase()} - Page ${index + 1}/${pagesTexte.length}`);
 
-                let coupe = restant.lastIndexOf('\n', 950);
-                if (coupe <= 0) coupe = restant.lastIndexOf(' ', 950);
-                if (coupe <= 0) coupe = 950;
-
-                let morceau = restant.substring(0, coupe);
-                
-                // Sécurité globale pour éviter de saturer l'embed complet (~6000 caractères max au total)
-                if (compteur === 5) {
-                    embedFiche.addFields({ name: `${titreTexte} (Fin)`, value: morceau + "...\n\n*⚠️ Dossier volumineux, fin de la transmission.*" });
-                    break;
-                }
-
-                embedFiche.addFields({ name: `${titreTexte} (Partie ${compteur})`, value: morceau });
-                restant = restant.substring(coupe).trim();
-                compteur++;
+            // On met les stats (Classification, etc.) uniquement sur la première page pour faire propre
+            if (index === 0) {
+                if (cible.espece) embed.addFields({ name: '🧬 Classification', value: cible.espece, inline: true });
+                if (cible.statut) embed.addFields({ name: '📊 Statut', value: cible.statut, inline: true });
+                if (cible.affiliation) embed.addFields({ name: '🏢 Affiliation', value: cible.affiliation, inline: false });
+                if (cible.image_url) embed.setThumbnail(cible.image_url);
             }
-        } else {
-            embedFiche.addFields({ name: titreTexte, value: `*[ERREUR] Aucune donnée classifiée disponible.*` });
+
+            embed.addFields({ name: titreTexte, value: texteDeLaPage });
+            return embed;
+        });
+
+        // 3. S'il n'y a qu'une seule page, on l'envoie normalement, sans boutons
+        if (embedsPages.length === 1) {
+            return interaction.reply({ embeds: [embedsPages[0]] });
         }
 
-        if (cible.image_url) embedFiche.setThumbnail(cible.image_url);
+        // 4. S'il y a plusieurs pages, on prépare les boutons
+        const row = new ActionRowBuilder().addComponents(
+            new ButtonBuilder().setCustomId('prec').setLabel('◀️ Précédent').setStyle(ButtonStyle.Primary).setDisabled(true),
+            new ButtonBuilder().setCustomId('suiv').setLabel('Suivant ▶️').setStyle(ButtonStyle.Primary)
+        );
 
-        try {
-            return await interaction.reply({ embeds: [embedFiche] });
-        } catch (error) {
-            console.error("[ERREUR DISCORD] Échec de l'envoi de l'embed :", error);
-            return interaction.reply({ content: "❌ Erreur structurelle : Les archives de ce dossier dépassent la capacité d'affichage maximale du terminal Discord.", ephemeral: true }).catch(console.error);
-        }
+        // On envoie le premier message et on le sauvegarde dans une variable
+        const messageReponse = await interaction.reply({ embeds: [embedsPages[0]], components: [row], fetchReply: true });
+
+        // 5. On crée le système qui "écoute" les clics sur les boutons (actif pendant 5 minutes)
+        const collector = messageReponse.createMessageComponentCollector({ componentType: ComponentType.Button, time: 300000 });
+        let pageActuelle = 0;
+
+        collector.on('collect', async i => {
+            // Sécurité : seul celui qui a tapé la commande peut changer de page
+            if (i.user.id !== interaction.user.id) {
+                return i.reply({ content: "Vous ne pouvez pas manipuler le terminal d'un autre agent.", ephemeral: true });
+            }
+
+            if (i.customId === 'prec') pageActuelle--;
+            if (i.customId === 'suiv') pageActuelle++;
+
+            // On met à jour l'état des boutons (on désactive "Précédent" sur la page 1, etc.)
+            row.components[0].setDisabled(pageActuelle === 0);
+            row.components[1].setDisabled(pageActuelle === embedsPages.length - 1);
+
+            // On met à jour l'affichage
+            await i.update({ embeds: [embedsPages[pageActuelle]], components: [row] });
+        });
+
+        // Quand le temps est écoulé (5 min), on désactive les boutons pour éviter les bugs
+        collector.on('end', () => {
+            row.components.forEach(btn => btn.setDisabled(true));
+            messageReponse.edit({ components: [row] }).catch(console.error);
+        });
     }
 
-    // --- COMMANDE : RAPPORT ---
     if (commandName === 'rapport') {
+        // ... (Logique inchangée)
         const recherche = options.getString('titre');
         const { data: rapports } = await supabase.from('rapports_enquete').select('*').ilike('titre', `%${recherche}%`).limit(1);
-
-        if (!rapports || rapports.length === 0) {
-            return interaction.reply({ content: `❌ Aucun rapport classifié sous l'intitulé : "${recherche}".`, ephemeral: true });
-        }
-
+        if (!rapports || rapports.length === 0) return interaction.reply({ content: `❌ Aucun rapport classifié sous l'intitulé : "${recherche}".`, ephemeral: true });
+        
         const rapport = rapports[0];
-        const embedRapport = new EmbedBuilder()
-            .setColor(COULEUR_TERMINAL)
-            .setTitle(`📂 ENQUÊTE : ${rapport.titre}`)
-            .setDescription(rapport.contenu)
-            .setFooter({ text: `Auteur : ${rapport.auteur_enquete || 'Inconnu'}` });
-
-        try {
-            return await interaction.reply({ embeds: [embedRapport] });
-        } catch (err) {
-            return interaction.reply({ content: "❌ Erreur lors de l'affichage du rapport d'enquête.", ephemeral: true });
-        }
+        const embedRapport = new EmbedBuilder().setColor(COULEUR_TERMINAL).setTitle(`📂 ENQUÊTE : ${rapport.titre}`).setDescription(rapport.contenu).setFooter({ text: `Auteur : ${rapport.auteur_enquete || 'Inconnu'}` });
+        return interaction.reply({ embeds: [embedRapport] });
     }
 });
 
