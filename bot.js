@@ -1,4 +1,14 @@
 require('dotenv').config();
+
+// --- 0. VÉRIFICATION CRITIQUE (Pour Render) ---
+const requiredEnv = ['DISCORD_TOKEN', 'SUPABASE_URL', 'SUPABASE_KEY'];
+requiredEnv.forEach(key => {
+    if (!process.env[key]) {
+        console.error(`!!! ERREUR : La variable ${key} est manquante !!!`);
+        process.exit(1);
+    }
+});
+
 const { Client, GatewayIntentBits, EmbedBuilder, ApplicationCommandOptionType } = require('discord.js');
 const { createClient } = require('@supabase/supabase-js');
 const express = require('express');
@@ -7,17 +17,10 @@ const express = require('express');
 const app = express();
 app.get('/', (req, res) => res.send('Le Terminal ARK est en ligne et fonctionnel.'));
 
-// On utilise le port fourni par Render, sinon 10000 par défaut
 const PORT = process.env.PORT || 10000;
 app.listen(PORT, '0.0.0.0', () => console.log(`[SYSTEMA] Serveur web actif sur le port ${PORT}`));
 
 // --- 2. INITIALISATION BASE DE DONNÉES ET DISCORD ---
-// On vérifie que les clés sont bien présentes
-if (!process.env.SUPABASE_URL || !process.env.SUPABASE_KEY || !process.env.DISCORD_TOKEN) {
-    console.error("ERREUR : Variables d'environnement manquantes !");
-    process.exit(1);
-}
-
 const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
 const bot = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent] });
 
@@ -28,8 +31,9 @@ bot.once('ready', async () => {
     console.log(`[SYSTEMA] Bot connecté en tant que : ${bot.user.tag}`);
     
     try {
-        // Utilisation de la variable d'environnement pour l'ID du serveur
         const guildId = process.env.GUILD_ID; 
+        if (!guildId) console.log("[Alerte] GUILD_ID non détecté, utilisation des commandes globales.");
+
         const guild = guildId ? bot.guilds.cache.get(guildId) : null;
         let commands = guild ? guild.commands : bot.application.commands;
 
@@ -92,6 +96,7 @@ bot.on('interactionCreate', async (interaction) => {
     if (!interaction.isChatInputCommand()) return;
     const { commandName, options, user } = interaction;
 
+    // --- COMMANDE : INCARNER ---
     if (commandName === 'incarner') {
         const nomPersonnage = options.getString('nom');
         const { error } = await supabase.from('liaison_agents').upsert({ discord_id: user.id, nom_agent: nomPersonnage });
@@ -100,12 +105,14 @@ bot.on('interactionCreate', async (interaction) => {
         return interaction.reply({ content: `🎭 **[SYNCHRONISATION RÔLE]**\nVous incarnez désormais : **${nomPersonnage}**.` });
     }
 
+    // --- VÉRIFICATION D'IDENTITÉ ---
     const { data: liaison } = await supabase.from('liaison_agents').select('nom_agent').eq('discord_id', user.id).single();
 
     if (!liaison && (commandName === 'journal')) {
         return interaction.reply({ content: "⚠️ Accès refusé. Choisissez d'abord un personnage avec `/incarner`.", ephemeral: true });
     }
 
+    // --- COMMANDE : JOURNAL ---
     if (commandName === 'journal') {
         const sousCommande = options.getSubcommand();
         const persoActuel = liaison.nom_agent;
@@ -137,6 +144,7 @@ bot.on('interactionCreate', async (interaction) => {
         }
     }
 
+    // --- COMMANDE : FICHE ---
     if (commandName === 'fiche') {
         const tableCible = options.getString('categorie');
         const recherche = options.getString('nom');
@@ -156,12 +164,31 @@ bot.on('interactionCreate', async (interaction) => {
         if (cible.espece) embedFiche.addFields({ name: '🧬 Classification', value: cible.espece, inline: true });
         if (cible.statut) embedFiche.addFields({ name: '📊 Statut', value: cible.statut, inline: true });
         if (cible.affiliation) embedFiche.addFields({ name: '🏢 Affiliation', value: cible.affiliation, inline: false });
-        if (cible.biographie) embedFiche.addFields({ name: '📝 Synthèse', value: cible.biographie });
+        
+        // --- NOUVEAU : GESTION DES BIOGRAPHIES LONGUES ---
+        if (cible.biographie) {
+            const bio = cible.biographie;
+            const LIMITE = 1000; // Limite avant de couper le texte
+
+            if (bio.length > LIMITE) {
+                // On cherche le dernier saut de ligne avant la limite pour ne pas couper un mot en plein milieu
+                const partie1 = bio.substring(0, LIMITE);
+                const dernierSaut = partie1.lastIndexOf('\n');
+                const decoupe = dernierSaut > 0 ? dernierSaut : LIMITE;
+                
+                embedFiche.addFields({ name: '📝 Synthèse (Partie 1)', value: bio.substring(0, decoupe) });
+                embedFiche.addFields({ name: '📝 Synthèse (Partie 2)', value: bio.substring(decoupe) });
+            } else {
+                embedFiche.addFields({ name: '📝 Synthèse', value: bio });
+            }
+        }
+
         if (cible.image_url) embedFiche.setThumbnail(cible.image_url);
 
         return interaction.reply({ embeds: [embedFiche] });
     }
 
+    // --- COMMANDE : RAPPORT ---
     if (commandName === 'rapport') {
         const recherche = options.getString('titre');
         const { data: rapports } = await supabase.from('rapports_enquete').select('*').ilike('titre', `%${recherche}%`).limit(1);
