@@ -165,22 +165,28 @@ bot.on('interactionCreate', async (interaction) => {
         if (cible.statut) embedFiche.addFields({ name: '📊 Statut', value: cible.statut, inline: true });
         if (cible.affiliation) embedFiche.addFields({ name: '🏢 Affiliation', value: cible.affiliation, inline: false });
         
-        // --- NOUVEAU : GESTION DES BIOGRAPHIES LONGUES ---
-        if (cible.biographie) {
-            const bio = cible.biographie;
-            const LIMITE = 1000; // Limite avant de couper le texte
+        // --- ADAPTATION DYNAMIQUE DES COLONNES SELON LA TABLE ---
+        const champTexte = tableCible === 'personnages' ? 'histoire_complete' : 'description';
+        const titreTexte = tableCible === 'personnages' ? '📝 Histoire' : '📝 Description';
+        const texteLong = cible[champTexte];
 
-            if (bio.length > LIMITE) {
-                // On cherche le dernier saut de ligne avant la limite pour ne pas couper un mot en plein milieu
-                const partie1 = bio.substring(0, LIMITE);
+        if (texteLong && texteLong.trim() !== '') {
+            const LIMITE = 1000; // Limite confortable avant découpage
+
+            if (texteLong.length > LIMITE) {
+                // Recherche du dernier saut de ligne avant la limite pour un rendu de texte propre
+                const partie1 = texteLong.substring(0, LIMITE);
                 const dernierSaut = partie1.lastIndexOf('\n');
                 const decoupe = dernierSaut > 0 ? dernierSaut : LIMITE;
                 
-                embedFiche.addFields({ name: '📝 Synthèse (Partie 1)', value: bio.substring(0, decoupe) });
-                embedFiche.addFields({ name: '📝 Synthèse (Partie 2)', value: bio.substring(decoupe) });
+                embedFiche.addFields({ name: `${titreTexte} (Partie 1)`, value: texteLong.substring(0, decoupe) });
+                embedFiche.addFields({ name: `${titreTexte} (Partie 2)`, value: texteLong.substring(decoupe) });
             } else {
-                embedFiche.addFields({ name: '📝 Synthèse', value: bio });
+                embedFiche.addFields({ name: titreTexte, value: texteLong });
             }
+        } else {
+            // Message explicite si la case dans la bdd est vide ou inexistante
+            embedFiche.addFields({ name: titreTexte, value: `*[ERREUR] Aucune donnée classifiée dans la colonne "${champTexte}".*` });
         }
 
         if (cible.image_url) embedFiche.setThumbnail(cible.image_url);
