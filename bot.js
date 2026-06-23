@@ -166,7 +166,7 @@ bot.on('interactionCreate', async (interaction) => {
         if (cible.affiliation) embedFiche.addFields({ name: '🏢 Affiliation', value: cible.affiliation, inline: false });
         
         // --- ADAPTATION DYNAMIQUE DES COLONNES SELON LA TABLE ---
-        const champTexte = tableCible === 'personnages' ? 'histoire_complete' : 'description';
+        const champTexte = tableCible === 'personnages' ? 'histoire_complète' : 'description';
         const titreTexte = tableCible === 'personnages' ? '📝 Histoire' : '📝 Description';
         const texteLong = cible[champTexte];
 
